@@ -10,13 +10,14 @@ export function Home({ onRules }: { onRules: () => void }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [bots, setBots] = useState(2);
 
   const needName = !me && !nickname.trim();
 
-  const onCreate = async () => {
-    if (needName) return setError('先起一个昵称，其他人靠它认出你');
+  const onCreate = async (withBots = 0) => {
+    if (needName) return setError(withBots > 0 ? '先起一个昵称' : '先起一个昵称，其他人靠它认出你');
     setBusy(true);
-    const res = await createRoom(nickname.trim());
+    const res = await createRoom(nickname.trim(), withBots);
     setBusy(false);
     if (res.ok) navigate(`/room/${res.code}`);
     else setError(res.error);
@@ -79,6 +80,23 @@ export function Home({ onRules }: { onRules: () => void }) {
         <button type="button" className="btn btn-primary btn-big" disabled={busy} onClick={() => void onCreate()}>
           开一个房间
         </button>
+
+        <div className="home-join">
+          <label htmlFor="bots">一个人也能玩</label>
+          <div className="home-join-row">
+            <select id="bots" value={bots} onChange={(e) => setBots(Number(e.target.value))}>
+              {[1, 2, 3, 4].map((n) => (
+                <option key={n} value={n}>
+                  对 {n} 个电脑
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn" disabled={busy} onClick={() => void onCreate(bots)}>
+              和电脑玩一局
+            </button>
+          </div>
+          <p className="field-note">人机局不记战绩。</p>
+        </div>
 
         <form className="home-join" onSubmit={onJoin}>
           <label htmlFor="code">朋友给了你房间号？</label>

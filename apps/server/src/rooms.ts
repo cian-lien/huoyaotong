@@ -3,6 +3,7 @@ import type { Server, Socket } from 'socket.io';
 import {
   type Ack,
   type Action,
+  type CardKind,
   type ClientToServerEvents,
   type GameEvent,
   type JoinResult,
@@ -18,6 +19,7 @@ import {
   actionSchema,
   createRoomSchema,
   joinSchema,
+  removeBotSchema,
 } from '@hyt/shared';
 import {
   type GameState,
@@ -25,6 +27,7 @@ import {
   type Step,
   applyAction,
   applyTimeout,
+  botDecide,
   createGame,
   eventVisibleTo,
   forfeit,
@@ -57,6 +60,8 @@ interface Seat {
   holdTimer: NodeJS.Timeout | null;
   /** 对局中途离开的人：座位号要留着，但人已经不在了 */
   left: boolean;
+  /** 电脑玩家：没有连接，由服务器替它出牌 */
+  bot: boolean;
 }
 
 interface Room {
@@ -69,9 +74,14 @@ interface Room {
   startedAt: Date | null;
   timer: NodeJS.Timeout | null;
   deadline: number | null;
+  /** 电脑玩家“想好了”之后要执行的动作 */
+  botTimers: NodeJS.Timeout[];
+  /** 每个电脑用望远镜看到的货舱顶；牌堆一动就作废 */
+  botKnown: (CardKind | null)[];
 }
 
 const MAX_ROOMS = 500;
+const BOT_NAMES = ['铁钩', '老船长', '独眼龙', '小水手'];
 const rng: Rng = (n) => randomInt(n);
 
 /**
@@ -105,6 +115,14 @@ export class RoomManager {
       ack(this.join(socket, payload));
     });
     socket.on('room:leave', () => this.leave(socket));
+    socket.on('room:addBot', (ack) => {
+      if (typeof ack !== 'function') return;
+      ack(this.addBot(socket));
+    });
+    socket.on('room:removeBot', (payload, ack) => {
+      if (typeof ack !== 'function') return;
+      ack(this.removeBot(socket, payload));
+    });
     socket.on('room:start', (ack) => {
       if (typeof ack !== 'function') return;
       ack(this.start(socket));
@@ -145,10 +163,13 @@ export class RoomManager {
       startedAt: null,
       timer: null,
       deadline: null,
+      botTimers: [],
+      botKnown: [],
     };
     this.rooms.set(room.code, room);
     const seat = this.addSeat(room, socket, nickname);
     room.hostToken = seat.token;
+    for (let i = 0; i < (parsed.data.bots ?? 0); i++) this.addBotSeat(room);
     this.emitRoom(room);
     return { ok: true, code: room.code, seat: seat.seat, seatToken: seat.token };
   }
@@ -163,8 +184,8 @@ export class RoomManager {
 
     // 先看是不是回来的老玩家：凭座位凭证，或同一个登录账号
     let seat =
-      room.seats.find((s) => !s.left && seatToken !== undefined && s.token === seatToken) ??
-      room.seats.find((s) => !s.left && user !== null && s.userId === user.id);
+      room.seats.find((s) => !s.left && !s.bot && seatToken !== undefined && s.token === seatToken) ??
+      room.seats.find((s) => !s.left && !s.bot && user !== null && s.userId === user.id);
 
     if (seat) {
       if (socket.data.roomCode !== room.code || socket.data.seatToken !== seat.token) this.detach(socket);
@@ -201,10 +222,105 @@ export class RoomManager {
       socketId: null,
       holdTimer: null,
       left: false,
+      bot: false,
     };
     room.seats.push(seat);
     this.bind(room, seat, socket);
     return seat;
+  }
+
+  // ───────────── 电脑玩家 ─────────────
+
+  private addBotSeat(room: Room): Seat {
+    const taken = new Set(room.seats.map((s) => s.nickname));
+    const name = BOT_NAMES.map((n) => `电脑·${n}`).find((n) => !taken.has(n)) ?? `电脑·${room.seats.length + 1}号`;
+    const seat: Seat = {
+      seat: room.seats.length,
+      token: randomBytes(24).toString('hex'),
+      userId: null,
+      nickname: name,
+      avatar: '🤖',
+      socketId: null,
+      holdTimer: null,
+      left: false,
+      bot: true,
+    };
+    room.seats.push(seat);
+    return seat;
+  }
+
+  private addBot(socket: GameSocket): Ack {
+    const at = this.locate(socket);
+    if (!at) return { ok: false, error: '你不在房间里' };
+    const { room, seat } = at;
+    if (room.hostToken !== seat.token) return { ok: false, error: '只有房主能加电脑玩家' };
+    if (room.status !== 'lobby') return { ok: false, error: '对局已经开始了' };
+    if (room.seats.length >= MAX_PLAYERS) return { ok: false, error: `房间满了（最多 ${MAX_PLAYERS} 人）` };
+    this.addBotSeat(room);
+    this.emitRoom(room);
+    return { ok: true };
+  }
+
+  private removeBot(socket: GameSocket, payload: unknown): Ack {
+    const at = this.locate(socket);
+    if (!at) return { ok: false, error: '你不在房间里' };
+    const { room, seat } = at;
+    if (room.hostToken !== seat.token) return { ok: false, error: '只有房主能移除电脑玩家' };
+    if (room.status !== 'lobby') return { ok: false, error: '对局已经开始了' };
+    const parsed = removeBotSchema.safeParse(payload);
+    const target = parsed.success ? room.seats[parsed.data.seat] : undefined;
+    if (!target?.bot) return { ok: false, error: '这个座位不是电脑玩家' };
+    room.seats = room.seats.filter((s) => s !== target);
+    room.seats.forEach((s, i) => (s.seat = i));
+    this.emitRoom(room);
+    return { ok: true };
+  }
+
+  /** 让该行动的电脑“想一会儿”再出牌；驳回窗口里每个电脑各自决定要不要驳回 */
+  private scheduleBots(room: Room) {
+    for (const t of room.botTimers) clearTimeout(t);
+    room.botTimers = [];
+    const game = room.game;
+    if (!game || game.phase === 'over' || room.status !== 'playing') return;
+
+    // 活着的只剩电脑时加快节奏，别让出局的人干等
+    const humanAlive = room.seats.some((s) => !s.bot && !s.left && game.players[s.seat]?.alive);
+    const base = humanAlive ? this.timers.botThink : this.timers.botThink / 4;
+
+    for (const bot of room.seats) {
+      if (!bot.bot) continue;
+      const action = botDecide(game, bot.seat, rng, { knownTop: room.botKnown[bot.seat] ?? null });
+      if (!action) continue;
+      let delay = base * (0.6 + Math.random() * 0.8);
+      // 驳回必须赶在窗口关闭之前
+      if (game.phase === 'nope') delay = Math.min(delay, this.timers.nope * 0.7);
+
+      room.botTimers.push(
+        setTimeout(() => {
+          // 这段时间里牌局已经变了（比如别人先驳回了）：这次决定作废，新状态会重新安排
+          if (room.game !== game || room.status !== 'playing') return;
+          const res = applyAction(game, bot.seat, action, rng);
+          if (res.ok) this.commit(room, res);
+          else this.log.error({ action, error: res.error }, `房间 ${room.code} 的电脑玩家做了不合法的操作`);
+        }, delay),
+      );
+    }
+  }
+
+  /** 记下电脑用望远镜看到的牌；货舱一有变动就全部忘掉 */
+  private rememberForBots(room: Room, events: GameEvent[]) {
+    for (const e of events) {
+      if (e.type === 'peeked') {
+        if (room.seats[e.to]?.bot) room.botKnown[e.to] = e.cards[0]?.kind ?? null;
+      } else if (
+        e.type === 'drew' ||
+        e.type === 'kegPlaced' ||
+        e.type === 'eliminated' ||
+        (e.type === 'resolved' && e.effect === 'shuffle')
+      ) {
+        room.botKnown = [];
+      }
+    }
   }
 
   /** 把一条连接绑到座位上；同一个座位之前的连接会被顶掉 */
@@ -277,7 +393,8 @@ export class RoomManager {
       seat.left = true;
     }
 
-    const present = room.seats.filter((s) => !s.left);
+    // 真人都走了就解散，电脑不算
+    const present = room.seats.filter((s) => !s.left && !s.bot);
     if (present.length === 0) {
       this.destroy(room);
       return;
@@ -295,6 +412,8 @@ export class RoomManager {
   private destroy(room: Room) {
     if (room.timer) clearTimeout(room.timer);
     room.timer = null;
+    for (const t of room.botTimers) clearTimeout(t);
+    room.botTimers = [];
     for (const s of room.seats) {
       if (s.holdTimer) clearTimeout(s.holdTimer);
       s.holdTimer = null;
@@ -322,6 +441,7 @@ export class RoomManager {
     room.status = 'playing';
     room.ranking = null;
     room.startedAt = new Date();
+    room.botKnown = [];
     this.emitRoom(room);
     this.commit(
       room,
@@ -345,7 +465,8 @@ export class RoomManager {
       if (s.holdTimer) clearTimeout(s.holdTimer);
       s.holdTimer = null;
     }
-    room.seats = room.seats.filter((s) => !s.left && s.socketId);
+    // 留下还在线的真人和所有电脑
+    room.seats = room.seats.filter((s) => s.bot || (!s.left && s.socketId));
     room.seats.forEach((s, i) => (s.seat = i));
     room.status = 'lobby';
     room.game = null;
@@ -388,11 +509,13 @@ export class RoomManager {
   /** 采纳规则引擎算出的新状态：存下来、广播、重新计时 */
   private commit(room: Room, step: Step) {
     room.game = step.state;
+    this.rememberForBots(room, step.events);
     if (step.state.phase === 'over') {
       this.finish(room, step.state);
     } else {
       this.schedule(room);
     }
+    this.scheduleBots(room);
     this.emitGame(room, step.events);
     if (room.status === 'over') this.emitRoom(room);
   }
@@ -406,7 +529,8 @@ export class RoomManager {
 
     let ms = this.timers[game.phase];
     const deciding = this.decidingSeat(game);
-    if (deciding !== null && !room.seats[deciding]?.socketId) ms = Math.min(ms, this.timers.disconnectedTurn);
+    const decider = deciding === null ? undefined : room.seats[deciding];
+    if (decider && !decider.bot && !decider.socketId) ms = Math.min(ms, this.timers.disconnectedTurn);
 
     room.deadline = Date.now() + ms;
     room.timer = setTimeout(() => {
@@ -426,6 +550,11 @@ export class RoomManager {
     room.deadline = null;
     room.status = 'over';
     room.ranking = ranking(game);
+    for (const t of room.botTimers) clearTimeout(t);
+    room.botTimers = [];
+
+    // 有电脑参与的对局不记战绩，免得靠打电脑刷胜场
+    if (room.seats.some((s) => s.bot)) return;
 
     this.store
       .saveMatch({
@@ -456,8 +585,9 @@ export class RoomManager {
           seat: s.seat,
           nickname: s.nickname,
           avatar: s.avatar,
-          connected: s.socketId !== null,
-          isGuest: s.userId === null,
+          connected: s.bot || s.socketId !== null,
+          isGuest: s.userId === null && !s.bot,
+          isBot: s.bot,
         })),
       ranking: room.ranking,
     };
@@ -476,7 +606,7 @@ export class RoomManager {
       players: base.players.map((p) => ({
         ...p,
         avatar: room.seats[p.seat]?.avatar ?? null,
-        connected: room.seats[p.seat]?.socketId != null,
+        connected: room.seats[p.seat]?.bot === true || room.seats[p.seat]?.socketId != null,
       })),
       deadline: room.deadline,
       serverNow: Date.now(),

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CARD_KINDS, type Card, type CardKind } from './cards.ts';
+import { CARD_KINDS, MAX_PLAYERS, type Card, type CardKind } from './cards.ts';
 
 // ───────────── 客户端 → 服务器：只有“操作” ─────────────
 
@@ -114,6 +114,8 @@ export interface RoomPlayer {
   avatar: string | null;
   connected: boolean;
   isGuest: boolean;
+  /** 电脑玩家：由服务器替它出牌 */
+  isBot: boolean;
 }
 
 export interface RoomState {
@@ -139,7 +141,11 @@ export const joinSchema = z.object({
 
 export const createRoomSchema = z.object({
   nickname: nicknameSchema.optional(),
+  /** 开房间时顺便拉几个电脑玩家（单人模式用） */
+  bots: z.number().int().min(0).max(MAX_PLAYERS - 1).optional(),
 });
+
+export const removeBotSchema = z.object({ seat: z.number().int().min(0).max(MAX_PLAYERS - 1) });
 
 export type Ack<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
@@ -153,6 +159,8 @@ export interface ClientToServerEvents {
   'room:create': (payload: z.input<typeof createRoomSchema>, ack: (res: Ack<JoinResult>) => void) => void;
   'room:join': (payload: z.input<typeof joinSchema>, ack: (res: Ack<JoinResult>) => void) => void;
   'room:leave': () => void;
+  'room:addBot': (ack: (res: Ack) => void) => void;
+  'room:removeBot': (payload: z.input<typeof removeBotSchema>, ack: (res: Ack) => void) => void;
   'room:start': (ack: (res: Ack) => void) => void;
   'room:again': (ack: (res: Ack) => void) => void;
   'game:action': (action: Action, ack: (res: Ack) => void) => void;
@@ -211,4 +219,6 @@ export const TIMERS = {
   disconnectedTurn: 8_000,
   /** 掉线后座位保留多久 */
   seatHold: 60_000,
+  /** 电脑玩家每次行动前“想”多久（实际会在这个值上下浮动） */
+  botThink: 1_100,
 } as const;

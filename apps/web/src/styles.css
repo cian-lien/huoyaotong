@@ -150,7 +150,8 @@ a,
   font-size: 0.9rem;
   color: var(--muted);
 }
-input:not([type='range']) {
+input:not([type='range']),
+select {
   width: 100%;
   min-height: 44px;
   padding: 0 0.8em;
@@ -492,6 +493,13 @@ button.card:hover {
 .lobby-tags {
   font-size: 0.85rem;
   color: var(--muted);
+}
+.lobby-remove {
+  min-height: 36px;
+  margin-right: -0.5rem;
+  padding: 0 0.6em;
+  font-size: 0.85rem;
+  text-decoration: underline;
 }
 
 /* ───────────── 牌桌 ───────────── */

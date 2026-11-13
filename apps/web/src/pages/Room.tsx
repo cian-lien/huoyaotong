@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { MAX_PLAYERS, MIN_PLAYERS } from '@hyt/shared';
-import { joinRoom, leaveRoom, playAgain, savedNickname, startGame, toast, useGame } from '../store.ts';
+import { addBot, joinRoom, leaveRoom, playAgain, removeBot, savedNickname, startGame, toast, useGame } from '../store.ts';
 import { Table } from '../components/Table.tsx';
 import { isMuted, setMuted } from '../sound.ts';
 
@@ -173,8 +173,20 @@ export function Room({ onRules }: { onRules: () => void }) {
                         {p.seat === room.mySeat && '（你）'}
                       </span>
                       <span className="lobby-tags">
-                        {[p.seat === room.hostSeat && '房主', p.isGuest && '游客', !p.connected && '掉线了'].filter(Boolean).join('，')}
+                        {[p.seat === room.hostSeat && '房主', p.isBot && '电脑', p.isGuest && '游客', !p.connected && '掉线了']
+                          .filter(Boolean)
+                          .join('，')}
                       </span>
+                      {p.isBot && isHost && (
+                        <button
+                          type="button"
+                          className="btn btn-quiet lobby-remove"
+                          aria-label={`移除${p.nickname}`}
+                          onClick={() => void removeBot(p.seat).then((res) => !res.ok && toast(res.error))}
+                        >
+                          移除
+                        </button>
+                      )}
                     </>
                   ) : (
                     <span className="lobby-name">空位</span>
@@ -183,6 +195,12 @@ export function Room({ onRules }: { onRules: () => void }) {
               );
             })}
           </ol>
+
+          {isHost && room.players.length < MAX_PLAYERS && (
+            <button type="button" className="btn" onClick={() => void addBot().then((res) => !res.ok && toast(res.error))}>
+              加一个电脑玩家
+            </button>
+          )}
 
           {isHost ? (
             <>
@@ -220,7 +238,11 @@ export function Room({ onRules }: { onRules: () => void }) {
                 </li>
               ))}
             </ol>
-            {!me && <p className="field-note">游客的成绩不会保存。登录后再玩，战绩就会记下来。</p>}
+            {room.players.some((p) => p.isBot) ? (
+              <p className="field-note">有电脑参与的对局不记战绩。</p>
+            ) : (
+              !me && <p className="field-note">游客的成绩不会保存。登录后再玩，战绩就会记下来。</p>
+            )}
             <div className="modal-actions">
               <button type="button" className="btn" onClick={onLeave}>
                 离开房间

@@ -68,8 +68,16 @@ export async function harness(timers: Partial<Timers> = {}): Promise<Harness> {
   };
 }
 
-export function createRoom(c: Client, nickname?: string): Promise<Ack<JoinResult>> {
-  return new Promise((resolve) => c.emit('room:create', { nickname }, resolve));
+export function createRoom(c: Client, nickname?: string, bots?: number): Promise<Ack<JoinResult>> {
+  return new Promise((resolve) => c.emit('room:create', { nickname, bots }, resolve));
+}
+
+export function addBot(c: Client): Promise<Ack> {
+  return new Promise((resolve) => c.emit('room:addBot', resolve));
+}
+
+export function removeBot(c: Client, seat: number): Promise<Ack> {
+  return new Promise((resolve) => c.emit('room:removeBot', { seat }, resolve));
 }
 
 export function joinRoom(c: Client, code: string, extra: { nickname?: string; seatToken?: string } = {}): Promise<Ack<JoinResult>> {

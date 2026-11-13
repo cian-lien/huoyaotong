@@ -271,11 +271,16 @@ function entered(res: Ack<JoinResult>) {
   set({ closed: null });
 }
 
-export async function createRoom(nickname: string): Promise<Ack<JoinResult>> {
+/** bots > 0 时是单人模式：带上电脑玩家，开好房间后直接开局 */
+export async function createRoom(nickname: string, bots = 0): Promise<Ack<JoinResult>> {
   if (nickname) save('hyt:nickname', nickname);
   set({ room: null, view: null, log: [], peek: null, blast: null });
-  const res = await emitWithAck<JoinResult>((s, ack) => s.emit('room:create', { nickname: nickname || undefined }, ack));
+  const res = await emitWithAck<JoinResult>((s, ack) => s.emit('room:create', { nickname: nickname || undefined, bots }, ack));
   entered(res);
+  if (res.ok && bots > 0) {
+    const started = await startGame();
+    if (!started.ok) toast(started.error);
+  }
   return res;
 }
 
@@ -296,6 +301,8 @@ export function leaveRoom() {
 }
 
 export const startGame = () => emitWithAck((s, ack) => s.emit('room:start', ack));
+export const addBot = () => emitWithAck((s, ack) => s.emit('room:addBot', ack));
+export const removeBot = (seat: number) => emitWithAck((s, ack) => s.emit('room:removeBot', { seat }, ack));
 export const playAgain = () => emitWithAck((s, ack) => s.emit('room:again', ack));
 
 /** 发一个对局操作；被服务器拒绝时弹出原因 */
