@@ -1,0 +1,17 @@
+{
+  "name": "huoyaotong",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "play": "pnpm --filter @hyt/engine play"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.11",
+    "typescript": "^7.0.2"
+  }
+}
