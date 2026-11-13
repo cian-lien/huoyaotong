@@ -1,0 +1,52 @@
+# 线上部署：一台服务器上跑 Caddy、游戏服务、PostgreSQL 三个容器
+#   cp .env.example .env   # 填好域名和数据库密码
+#   docker compose up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hyt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 里设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: hyt
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hyt -d hyt"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  server:
+    build:
+      context: .
+      target: server
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://hyt:${POSTGRES_PASSWORD}@db:5432/hyt
+      PORT: "3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  caddy:
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+
+volumes:
+  db_data:
+  caddy_data:
+  caddy_config:

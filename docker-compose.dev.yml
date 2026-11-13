@@ -1,0 +1,16 @@
+# 本地开发只需要一个数据库：
+#   docker compose -f docker-compose.dev.yml up -d
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hyt
+      POSTGRES_PASSWORD: hyt
+      POSTGRES_DB: hyt
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev_db_data:/var/lib/postgresql/data
+
+volumes:
+  dev_db_data:

@@ -89,10 +89,9 @@ export function registerAuthRoutes(app: FastifyInstance, store: Store, opts: { s
     return { ok: true };
   });
 
-  app.get('/api/me', async (req, reply) => {
-    const user = await requireUser(req, reply);
-    if (!user) return reply;
-    return user;
+  // 没登录不算错误：返回 user: null，前端用它判断是不是游客
+  app.get('/api/me', async (req) => {
+    return { user: await userFromCookieHeader(store, req.headers.cookie) };
   });
 
   app.patch('/api/me', async (req, reply) => {

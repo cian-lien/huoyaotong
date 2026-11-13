@@ -24,7 +24,7 @@ describe('账号', () => {
     expect(setCookie).toContain('SameSite=Lax');
 
     const me = await get('/api/me', setCookie.split(';')[0]);
-    expect(me.json()).toMatchObject({ nickname: '红胡子' });
+    expect(me.json()).toMatchObject({ user: { nickname: '红胡子' } });
   });
 
   it('密码不明文存，数据库里也不存 cookie 里的 token', async () => {
@@ -64,13 +64,16 @@ describe('账号', () => {
   it('退出登录后 cookie 失效', async () => {
     const cookie = await h.register('a@example.com', '红胡子');
     expect((await post('/api/auth/logout', {}, cookie)).statusCode).toBe(200);
-    expect((await get('/api/me', cookie)).statusCode).toBe(401);
+    expect((await get('/api/me', cookie)).json()).toEqual({ user: null });
+    expect((await get('/api/me/stats', cookie)).statusCode).toBe(401);
   });
 
-  it('没登录不能看个人信息和战绩', async () => {
-    expect((await get('/api/me')).statusCode).toBe(401);
+  it('没登录：查自己是 null，战绩和改资料被拒绝', async () => {
+    expect((await get('/api/me')).json()).toEqual({ user: null });
+    expect((await get('/api/me', 'sid=随便编一个')).json()).toEqual({ user: null });
     expect((await get('/api/me/stats')).statusCode).toBe(401);
-    expect((await get('/api/me', 'sid=随便编一个')).statusCode).toBe(401);
+    const patch = await h.app.fastify.inject({ method: 'PATCH', url: '/api/me', payload: { nickname: 'x' } });
+    expect(patch.statusCode).toBe(401);
   });
 
   it('可以改昵称和头像', async () => {
