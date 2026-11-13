@@ -120,6 +120,8 @@ export interface RoomState {
   code: string;
   status: 'lobby' | 'playing' | 'over';
   hostSeat: number;
+  /** 收到这条消息的人自己的座位号（每个人收到的不一样） */
+  mySeat: number;
   players: RoomPlayer[];
   ranking: RankEntry[] | null;
 }
