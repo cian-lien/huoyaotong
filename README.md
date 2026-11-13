@@ -4,6 +4,8 @@
 
 玩法借鉴了“摸牌赌运气 + 功能牌坑人”这一类派对卡牌，题材、牌名和牌面都是原创的。
 
+产品需求见 [docs/PRD.md](docs/PRD.md)，技术选型和设计见 [docs/architecture.md](docs/architecture.md)。
+
 ## 本地跑起来
 
 需要 Node 22+、pnpm 10+，以及一个 PostgreSQL（下面用 Docker 起）。
@@ -60,6 +62,7 @@ packages/
   shared/     牌的定义、消息协议、Zod 校验（前后端共用）
 deploy/       Caddy 配置
 scripts/      数据库备份脚本
+docs/         需求文档、技术架构文档
 ```
 
 依赖方向是单向的：`apps → engine → shared`。任务由 Turborepo 按这个顺序编排（见 `turbo.json`）。
